@@ -20,24 +20,20 @@ package org.apache.flink.contrib.siddhi.operator;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.contrib.siddhi.exception.UndefinedStreamException;
 import org.apache.flink.contrib.siddhi.schema.StreamSchema;
-import org.apache.flink.core.fs.FSDataInputStream;
-import org.apache.flink.core.fs.FSDataOutputStream;
 import org.apache.flink.core.memory.DataInputView;
-import org.apache.flink.core.memory.DataInputViewStreamWrapper;
 import org.apache.flink.core.memory.DataOutputView;
-import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
-import org.apache.flink.runtime.state.CheckpointStreamFactory;
-import org.apache.flink.runtime.state.OperatorStateHandle;
+import org.apache.flink.runtime.state.StateHandle;
+import org.apache.flink.runtime.state.AbstractStateBackend.CheckpointStateOutputView;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.Output;
-import org.apache.flink.streaming.api.operators.StreamCheckpointedOperator;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.MultiplexingStreamRecordSerializer;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.StreamTask;
+import org.apache.flink.streaming.runtime.tasks.StreamTaskState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.wso2.siddhi.core.ExecutionPlanRuntime;
@@ -46,12 +42,9 @@ import org.wso2.siddhi.core.stream.input.InputHandler;
 import org.wso2.siddhi.query.api.definition.AbstractDefinition;
 
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.concurrent.RunnableFuture;
 
 /**
  * <h1>Siddhi Runtime Operator</h1>
@@ -83,7 +76,7 @@ import java.util.concurrent.RunnableFuture;
  * @param <IN>  Input Element Type
  * @param <OUT> Output Element Type
  */
-public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOperator<OUT> implements OneInputStreamOperator<IN, OUT>, StreamCheckpointedOperator {
+public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOperator<OUT> implements OneInputStreamOperator<IN, OUT> {
 	private static final Logger LOGGER = LoggerFactory.getLogger(AbstractSiddhiOperator.class);
 	private static final int INITIAL_PRIORITY_QUEUE_CAPACITY = 11;
 
@@ -258,13 +251,14 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 	}
 
 	@Override
-	public void dispose() throws Exception {
+	public void dispose() {
 		LOGGER.info("Disposing");
 		super.dispose();
 		shutdownSiddhiRuntime();
 		output.close();
 	}
 
+	/*
 	@Override
 	public void snapshotState(FSDataOutputStream out, long checkpointId, long timestamp) throws Exception {
 		final ObjectOutputStream oos = new ObjectOutputStream(out);
@@ -280,7 +274,7 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 
 		oos.flush();
 	}
-
+	
 	@Override
 	public RunnableFuture<OperatorStateHandle> snapshotState(long checkpointId, long timestamp, CheckpointStreamFactory streamFactory) throws Exception {
 		return super.snapshotState(checkpointId, timestamp, streamFactory);
@@ -301,7 +295,41 @@ public abstract class AbstractSiddhiOperator<IN, OUT> extends AbstractStreamOper
 		// Restore queue buffer snapshot
 		this.priorityQueue = restoreQueuerState(new DataInputViewStreamWrapper(ois));
 	}
+	*/
+	
+	@Override
+	public StreamTaskState snapshotOperatorState(long checkpointId, long timestamp) throws Exception {
+		StreamTaskState snapshotState = super.snapshotOperatorState(checkpointId, timestamp);
+		
+		CheckpointStateOutputView outputView = getStateBackend().createCheckpointStateOutputView(checkpointId, timestamp);
+		// Write siddhi snapshot
+		byte[] siddhiRuntimeSnapshot = this.siddhiRuntime.snapshot();
+		int siddhiRuntimeSnapshotLength = siddhiRuntimeSnapshot.length;
+		outputView.writeInt(siddhiRuntimeSnapshotLength);
+		outputView.write(siddhiRuntimeSnapshot, 0, siddhiRuntimeSnapshotLength);
+		snapshotState.setOperatorState(outputView.closeAndGetHandle());
+		
+		return snapshotState;
+	}
 
+	@Override
+	public void restoreState(StreamTaskState state) throws Exception {
+		super.restoreState(state);
+		
+		StateHandle<?> operatorStateHandle = state.getOperatorState();
+		DataInputView inputView = (DataInputView) operatorStateHandle.getState(getUserCodeClassloader());
+		// Restore siddhi snapshot
+		startSiddhiRuntime();
+		int siddhiRuntimeSnapshotLength = inputView.readInt();
+		byte[] siddhiRuntimeSnapshot = new byte[siddhiRuntimeSnapshotLength];
+		int readLength = inputView.read(siddhiRuntimeSnapshot, 0, siddhiRuntimeSnapshotLength);
+		assert readLength == siddhiRuntimeSnapshotLength;
+		this.siddhiRuntime.restore(siddhiRuntimeSnapshot);
+
+		// Restore queue buffer snapshot
+		this.priorityQueue = restoreQueuerState(inputView);
+	}
+	
 	protected abstract void snapshotQueuerState(PriorityQueue<StreamRecord<IN>> queue,
 												DataOutputView dataOutputView) throws IOException;
 
