@@ -165,37 +165,13 @@ under the License.
 
 
     <build>
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-deploy-plugin</artifactId>
-                    <version>2.8.1</version>
-                    <configuration>
-                        <skip>true</skip>
-                    </configuration>
-                    <executions>
-                        <execution>
-                            <phase>deploy</phase>
-                            <configuration>
-                                <packaging>jar</packaging>
-                                <generatePom>true</generatePom>
-                                <url>https://clojars.org/repo</url>
-                                <repositoryId>clojars</repositoryId>
-                                <artifactId>${project.artifactId}</artifactId>
-                                <groupId>${project.groupId}</groupId>
-                                <version>${project.version}</version>
-                                <file>${project.build.directory}/${project.build.finalName}.jar</file>
-                            </configuration>
-                            <goals>
-                                <goal>deploy-file</goal>
-                            </goals>
-                        </execution>
-                    </executions>
-                </plugin>
-
-            </plugins>
-        </pluginManagement>
+		<extensions>
+			<extension>
+				<groupId>org.apache.maven.wagon</groupId>
+				<artifactId>wagon-webdav-jackrabbit</artifactId>
+				<version>2.8</version>
+			</extension>
+		</extensions>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -209,11 +185,14 @@ under the License.
     </build>
 
     <distributionManagement>
-        <!--Deploy to clojars repository by: mvn deploy -DskipTests -->
-        <repository>
-            <id>clojars</id>
-            <name>Clojars repository</name>
-            <url>https://clojars.org/repo</url>
-        </repository>
+        <!--Deploy using: mvn deploy -DskipTests -->
+    	<repository>
+			<id>dreamhost</id>
+			<url>http://build.thejermans.com/maven</url>
+		</repository>
+		<snapshotRepository>
+			<id>dreamhost</id>
+			<url>http://build.thejermans.com/maven</url>
+		</snapshotRepository>
     </distributionManagement>
 </project>
